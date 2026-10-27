@@ -5,7 +5,7 @@
 # -----------------------------------------
 
 # Set path to BEAST jar
-BEAST_JAR="~/beast-mcmc/build/dist/beast.jar"
+BEAST_JAR="$HOME/beast-mcmc/build/dist/beast.jar"
 
 # Where the BEAGLE library was installed
 BEAGLE_LIB="/usr/local/lib"
@@ -59,21 +59,30 @@ for xml_file in "$XML_FOLDER"/gradient/*.xml "$XML_FOLDER"/scaling/*.xml; do
         java -Djava.library.path="$BEAGLE_LIB" -jar "$BEAST_JAR" $COMMON_OPTIONS -working "$xml_file" \
             > "$output_file" 2>&1
 
-        # Extract the per-operation timing table
+        # Extract the average timings printed by the benchmarking build
+        # (printTime = true in AdjointGenericBastaLikelihoodDelegate.java)
         timing_block=$(awk '
-          /Operation Timing Table \(Average time per call\):/ { block=""; inblock=1 }
-          inblock { block = block $0 "\n" }
-          /^$/ && inblock { inblock=0 }
-          END { printf "%s", block }
+          function avg(line) { if (match(line, /avg=[0-9.]+ ms/)) return substr(line, RSTART + 4, RLENGTH - 4); return "" }
+          /\[BASTA LIKELIHOOD/                   { lik  = avg($0) }
+          /\[BASTA GRADIENT/ && /calls=/         { grad = avg($0) }
+          /\[BASTA GRADIENT/ && /backward-pass:/ { bwd  = avg($0) }
+          /\[BASTA GRADIENT/ && /eigen-basis:/   { eig  = avg($0) }
+          END {
+            if (lik  != "") printf "  likelihood avg:     %s\n", lik
+            if (grad != "") printf "  gradient avg:       %s\n", grad
+            if (bwd  != "") printf "  backward-pass avg:  %s\n", bwd
+            if (eig  != "") printf "  eigen-basis avg:    %s\n", eig
+          }
         ' "$output_file")
 
         # Append to summary
         {
-            echo "${base_name} (threads=${thread_count}):"
+            if [ "$thread_count" -eq 999 ]; then label="gpu"; else label="cpu_t${thread_count}"; fi
+            echo "${base_name} [${label}]:"
             if [ -n "$timing_block" ]; then
                 echo "$timing_block"
             else
-                echo "  Operation Timing Table not found"
+                echo "  timing lines not found (see the benchmarking build in README.md)"
             fi
             echo ""
         } >> "$RESULTS_FILE"
